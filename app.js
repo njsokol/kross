@@ -49,7 +49,12 @@ class Player extends Entity {
         this.pressingAttack = false;
         this.mouseAngle = 0;
         this.maxSpd = 10;
+        this.hp = 10;
+        this.hpMax = 10;
+        this.score = 0;
+
         Player.list[id] = this;
+        initPack.player.push(this.getInitPack());
     }
 
     update() {
@@ -76,6 +81,28 @@ class Player extends Entity {
         else if (this.pressingDown) this.spdY = - this.maxSpd;
         else this.spdY = 0;
     }
+
+    getInitPack() {
+        return {
+            id: this.id,
+            x: this.x,
+            y: this.y,
+            number: this.number,
+            hp: this.hp,
+            hpMax: this.hpMax,
+            score: this.score
+        }
+    }
+
+    getUpdatePack() {
+        return {
+            id: this.id,
+            x: this.x,
+            y: this.y,
+            hp: this.hp,
+            score: this.score
+        }
+    }
 }
 
 Player.list = {};
@@ -97,10 +124,16 @@ Player.onConnect = (socket) => {
         else if (inputId === "mouseAngle")
             player.mouseAngle = state;
     })
+
+    socket.emit("init", {
+        players: Player.getAllInitPack(),
+        bullets: Bullet.getAllInitPack()
+    });
 }
 
 Player.onDisconnect = (socket) => {
     delete Player.list[socket.id];
+    removePack.player.push(socket.id);
 }
 
 Player.update = () => {
@@ -108,13 +141,17 @@ Player.update = () => {
     for (let i in Player.list) {
         const player = Player.list[i];
         player.update();
-        pack.push({
-            x: player.x,
-            y: player.y,
-            number: player.number
-        });
+        pack.push(player.getUpdatePack());
     }
     return pack;
+}
+
+Player.getAllInitPack = () => {
+    const players = [];
+    for (let i in Player.list) {
+        players.push(Player.list[i].getInitPack())
+    }
+    return players;
 }
 
 class Bullet extends Entity {
@@ -127,7 +164,7 @@ class Bullet extends Entity {
         this.toRemove = false;
         this.parent = parent;
         Bullet.list[this.id] = this;
-
+        initPack.bullet.push(this.getInitPack());
     }
 
     update() {
@@ -139,9 +176,37 @@ class Bullet extends Entity {
         for (let i in Player.list) {
             const p = Player.list[i];
             if (this.getDistance(p) < 32 && this.parent !== p.id) {
-                // handle collision hp--;
+                p.hp--;
+                const shooter = Player.list[this.parent];
+                if(shooter) {
+                    shooter.score += 1;
+                }
+                if (p.hp <= 0) {
+                    p.hp = p.hpMax;
+                    p.x = Math.random() * 500;
+                    p.y = Math.random() * 500;
+                }
+
+
+
                 this.toRemove = true;
             }
+        }
+    }
+
+    getInitPack() {
+        return {
+            id: this.id,
+            x: this.x,
+            y: this.y
+        }
+    }
+
+    getUpdatePack() {
+        return {
+            id: this.id,
+            x: this.x,
+            y: this.y
         }
     }
 }
@@ -154,21 +219,67 @@ Bullet.update = () => {
         bullet.update();
         if (bullet.toRemove) {
             delete Bullet.list[i];
+            removePack.bullet.push(bullet.id);
         }
         else {
-            pack.push({
-                x: bullet.x,
-                y: bullet.y
-            });
+            pack.push(bullet.getUpdatePack());
         }
     }
     return pack;
 }
 
+Bullet.getAllInitPack = () => {
+    const bullets = [];
+    for (let i in Bullet.list) {
+        bullets.push(Bullet.list[i].getInitPack())
+    }
+    return bullets;
+}
+
+const USERS = {
+    // username:password
+    bob: "bob",
+    cat: "cat"
+}
+
+function isValidCreds(creds) {
+    return Boolean(USERS[creds.username] === creds.password);
+}
+
+function isUsernameTaken(username) {
+    return Boolean(USERS[username]);
+}
+
+function addUser(creds) {
+    USERS[creds.username] = creds.password;
+}
+
+
 io.on('connection', function (socket) {
 
     socket.id = Math.random();
     SOCKET_LIST[socket.id] = socket;
+
+    socket.on("signIn", (data) => {
+        if (isValidCreds(data)) {
+            Player.onConnect(socket);
+            socket.emit("signInResponse", {success: true})
+        }
+        else {
+            socket.emit("signInResponse", {success: false})
+        }
+    })
+
+    socket.on("signUp", (data) => {
+        if (isUsernameTaken(data)) {
+            socket.emit("signUpResponse", {success: false})
+        }
+        else {
+            addUser(data);
+            socket.emit("signUpResponse", {success: true})
+        }
+    })
+
 
     socket.on('disconnect', () => {
         delete SOCKET_LIST[socket.id];
@@ -190,9 +301,10 @@ io.on('connection', function (socket) {
         }
         catch {}
     })
-
-    Player.onConnect(socket);
 });
+
+const initPack = {player: [], bullet: []};
+const removePack = {player: [], bullet: []};
 
 setInterval(() => {
     const pack = {
@@ -202,7 +314,14 @@ setInterval(() => {
 
     for (var i in SOCKET_LIST) {
         const socket = SOCKET_LIST[i];
-        socket.emit('newPositions', pack);
+        socket.emit('init', initPack);
+        socket.emit('update', pack);
+        socket.emit('remove', removePack);
     }
+
+    initPack.player = [];
+    initPack.bullet = [];
+    removePack.player = [];
+    removePack.bullet = [];
 
 }, 1000 / 25);

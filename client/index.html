@@ -8,34 +8,57 @@
 </head>
 
 <body>
-    <h1>Hello World 2</h1>
-    <canvas id="ctx" width="500" height="500" style="border: 1px solid #000"></canvas>
+    <div id="signDiv">
+        Username: <input id="signDiv-username" type="text" /><br />
+        Password: <input id="signDiv-password" type="password" />
+        <button id="signDiv-signIn">Sign In</button>
+        <button id="signDiv-signUp">Sign Up</button>
+    </div>
+    <div id="gameDiv" style="display: none">
+        <h1>Hello World 2</h1>
+        <canvas id="ctx" width="500" height="500" style="border: 1px solid #000"></canvas>
 
-    <div id="chat-text" style="width: 500px; height: 100px; overflow: scroll"></div>
-    <form id="chat-form" type="submit">
-        <input id="chat-input" type="text" style="width: 500px" />
-    </form>
+        <div id="chat-text" style="width: 500px; height: 100px; overflow: scroll"></div>
+        <form id="chat-form" type="submit">
+            <input id="chat-input" type="text" style="width: 500px" />
+        </form>
+    </div>
 
 
     <script src="/socket.io/socket.io.js"></script>
     <script>
         const socket = io();
+
+        // Sign
+        const signDiv = document.getElementById("signDiv");
+        const signDivUsername = document.getElementById("signDiv-username");
+        const signDivPassword = document.getElementById("signDiv-password");
+        const signDivSignIn = document.getElementById("signDiv-signIn");
+        const signDivSignUp = document.getElementById("signDiv-password");
+
+        signDivSignIn.onclick = function () {
+            socket.emit("signIn", {username: signDivUsername.value, password: signDivPassword.value});
+        }
+
+        signDivSignUp.onclick = function () {
+            socket.emit("signUp", {username: signDivUsername.value, password: signDivPassword.value});
+        }
+
+        socket.on("signInResponse", (data) => {
+            if (data.success) {
+                signDiv.style.display = "none";
+                gameDiv.style.display = "block";
+            }
+            else {
+                alert("Sign in unsuccessful");
+            }
+        })
+
+
+        // Chat
         const chatText = document.getElementById("chat-text");
         const chatInput = document.getElementById("chat-input");
         const chatForm = document.getElementById("chat-form");
-        const ctx = document.getElementById("ctx").getContext("2d");
-        ctx.font = "30px Arial";
-
-        socket.on('newPositions', (data) => {
-            ctx.clearRect(0, 0, 500, 500);
-            const {player, bullet} = data;
-            for (var i = 0; i < player.length; i++) {
-                ctx.fillText(player[i].number, player[i].x, player[i].y);
-            }
-            for (var i = 0; i < bullet.length; i++) {
-                ctx.fillRect(bullet[i].x - 5, bullet[i].y - 5, 10, 10);
-            }
-        })
 
         socket.on("addToChat", (data) => {
             chatText.innerHTML += `<div>${data}</div>`;
@@ -52,6 +75,111 @@
             }
             chatInput.value = "";
         }
+
+        // Game
+        const ctx = document.getElementById("ctx").getContext("2d");
+        ctx.font = "30px Arial";
+
+        class Player {
+            constructor(initPack) {
+                this.id = initPack.id;
+                this.number = initPack.number;
+                this.x = initPack.x;
+                this.y = initPack.y;
+                this.hp = initPack.hp;
+                this.hpMax = initPack.hpMax;
+                this.score = initPack.score;
+
+                Player.list[this.id] = this;
+                return this;
+            }
+
+            draw() {
+                const hpWidth = 30 * this.hp / this.hpMax;
+                ctx.fillStyle = "#aaa";
+                ctx.fillRect(this.x - 15, this.y - 20, this.hpMax, 5);
+                ctx.fillStyle = "green";
+                ctx.fillRect(this.x - 15, this.y - 20, hpWidth, 5);
+                ctx.fillStyle = "#000";
+                ctx.fillText(this.number, this.x, this.y);
+
+                ctx.fillText(this.score, this.x - 60, this.y - 60);
+            }
+        }
+        Player.list = {};
+
+        class Bullet {
+            constructor(initPack) {
+                this.id = initPack.id;
+                this.x = initPack.x;
+                this.y = initPack.y;
+                Bullet.list[this.id] = this;
+                return this;
+            }
+
+            draw() {
+                ctx.fillRect(this.x - 5, this.y - 5, 10, 10);
+            }
+        }
+        Bullet.list = {};
+
+        socket.on('init', (data) => {
+            const {player, bullet} = data;
+            for (let i = 0; i < player.length; i++) {
+                new Player(player[i]);
+            }
+            for (let i = 0; i < bullet.length; i++) {
+                new Bullet(bullet[i]);
+            }
+        })
+
+        socket.on('update', (data) => {
+            const {player, bullet} = data;
+            for (let i = 0; i < player.length; i++) {
+                const pack = player[i];
+                const p = Player.list[pack.id];
+                if (p) {
+                    if (p.x !== undefined)
+                        p.x = pack.x;
+                    if (p.y !== undefined)
+                        p.y = pack.y;
+                    if (p.hp !== undefined)
+                        p.hp = pack.hp;
+                    if (p.score !== undefined)
+                        p.score = pack.score;
+                }
+            }
+            for (let i = 0; i < bullet.length; i++) {
+                const pack = bullet[i];
+                const b = Bullet.list[pack.id];
+                if (b) {
+                    if (b.x !== undefined)
+                        b.x = pack.x;
+                    if (b.y !== undefined)
+                        b.y = pack.y;
+                }
+            }
+        })
+
+        socket.on('remove', (data) => {
+            const {player, bullet} = data;
+            for (let i = 0; i < player.length; i++) {
+                delete Player.list[player[i]];
+            }
+            for (let i = 0; i < bullet.length; i++) {
+                delete Bullet.list[bullet[i]];
+            }
+        })
+
+        setInterval(() => {
+            ctx.clearRect(0, 0, 500, 500);
+            for (let i in Player.list) {
+                Player.list[i].draw();
+            }
+            for (let i in Bullet.list) {
+                Bullet.list[i].draw();
+            }
+        })
 
         document.onkeydown = function (event) {
             if (event.keyCode === 68) //d
